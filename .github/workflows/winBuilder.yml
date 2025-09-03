@@ -78,16 +78,19 @@ jobs:
           log-name: StandaloneWindows64-Build
           build-target: StandaloneWindows64
           args: -quit -batchmode -executeMethod Buildalon.Editor.BuildPipeline.UnityPlayerBuildTools.StartCommandLineBuild
-
-      # 8) Upload artifacts (exe, _Data, logs)
-      - name: Upload Build Artifacts
+      
+      - name: Package build (zip)
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:UNITY_PROJECT_PATH "Builds/StandaloneWindows64"
+          $zipPath  = Join-Path $env:GITHUB_WORKSPACE "Windows64-Build-${{ github.run_number }}.zip"
+          Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
+          Write-Host "Zipped -> $zipPath"
+      
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
-        if: success() || failure()
         with:
           name: Windows64-Build-${{ github.run_number }}
           retention-days: 14
-          path: |
-            ${{ github.workspace }}/**/*.log
-            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/**/*.exe
-            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/**/*_Data/**
-            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/MonoBleedingEdge/**
+          if-no-files-found: error
+          path: ${{ github.workspace }}/Windows64-Build-${{ github.run_number }}.zip
