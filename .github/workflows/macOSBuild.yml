@@ -1,0 +1,110 @@
+name: Unity • macOS Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "Assets/**"
+      - "Packages/**"
+      - "ProjectSettings/**"
+      - ".github/workflows/unity-macos.yml"
+  pull_request:
+    branches: [ "*" ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    env:
+      UNITY_PROJECT_PATH: .
+    steps:
+      # 1) Checkout (with LFS)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+          clean: true
+
+      - name: Ensure LFS files are present
+        run: |
+          git lfs install
+          git lfs fetch --all
+          git lfs checkout
+
+      # 2) Cache Library
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          key: Library-${{ runner.os }}-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-${{ runner.os }}-
+
+      # 3) Install Unity (auto-detects version)
+      - name: Setup Unity
+        uses: buildalon/unity-setup@v1
+        with:
+          build-targets: StandaloneOSX
+
+      # 4) Activate Unity (same secrets as Windows)
+      - name: Activate Unity License
+        uses: buildalon/activate-unity-license@v1
+        with:
+          license: Personal
+          username: ${{ secrets.UNITY_USERNAME }}
+          password: ${{ secrets.UNITY_PASSWORD }}
+
+      # 5) Add Buildalon package
+      - name: Add Build Pipeline package
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: |
+          npm install -g openupm-cli
+          openupm add com.virtualmaker.buildalon
+
+      # (Optional) Apply CI Player/Build settings (see note below)
+      # - name: Apply CI Build Config (macOS)
+      #   uses: buildalon/unity-action@v1
+      #   with:
+      #     log-name: apply-config-macos
+      #     build-target: StandaloneOSX
+      #     args: -quit -batchmode -executeMethod CIProjectConfig.ApplyMacBuildConfig
+
+      # 6) Validate
+      - name: Project Validation
+        uses: buildalon/unity-action@v1
+        with:
+          log-name: project-validation-osx
+          build-target: StandaloneOSX
+          args: -quit -batchmode -executeMethod Buildalon.Editor.BuildPipeline.UnityPlayerBuildTools.ValidateProject
+
+      # 7) Build macOS (.app under ./Builds/StandaloneOSX/)
+      - name: macOS Build
+        uses: buildalon/unity-action@v1
+        with:
+          log-name: StandaloneOSX-Build
+          build-target: StandaloneOSX
+          args: -quit -batchmode -executeMethod Buildalon.Editor.BuildPipeline.UnityPlayerBuildTools.StartCommandLineBuild
+
+      # 8) Zip the .app (preserves bundle structure & exec bits)
+      - name: Zip .app bundle
+        shell: bash
+        run: |
+          APP_PATH=$(find "${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneOSX" -maxdepth 1 -name "*.app" -print -quit)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No .app found in Builds/StandaloneOSX"; exit 1
+          fi
+          ZIP_PATH="${APP_PATH%.*}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          echo "Zipped to: $ZIP_PATH"
+
+      # 9) Upload artifacts
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: macOS-Build-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            ${{ github.workspace }}/**/*.log
+            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneOSX/**/*.zip
