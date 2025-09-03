@@ -1,0 +1,93 @@
+name: Unity • Windows Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "Assets/**"
+      - "Packages/**"
+      - "ProjectSettings/**"
+      - ".github/workflows/unity-windows.yml"
+  pull_request:
+    branches: [ "*" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest   # Windows runner is ideal for Windows/IL2CPP builds
+    env:
+      UNITY_PROJECT_PATH: .   # your Unity project is at the repo root
+    steps:
+      # 1) Checkout (with LFS if you keep binaries/textures in LFS)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+          clean: true
+
+      # (Optional) LFS edge cases
+      - name: Ensure LFS files are present
+        run: |
+          git lfs install
+          git lfs fetch --all
+          git lfs checkout
+
+      # 2) Cache the Library to speed up builds
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          key: Library-${{ runner.os }}-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-${{ runner.os }}-
+
+      # 3) Install Unity (auto-detects version from ProjectVersion.txt)
+      - name: Setup Unity
+        uses: buildalon/unity-setup@v1
+        with:
+          build-targets: StandaloneWindows64
+
+      # 4) Activate license (Personal; use Professional + serial if you have Pro)
+      - name: Activate Unity License
+        uses: buildalon/activate-unity-license@v1
+        with:
+          license: Personal
+          username: ${{ secrets.UNITY_USERNAME }}
+          password: ${{ secrets.UNITY_PASSWORD }}
+
+      # 5) Add Buildalon package (gives us the build methods used below)
+      - name: Add Build Pipeline package
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: |
+          npm install -g openupm-cli
+          openupm add com.virtualmaker.buildalon
+
+      # 6) Optional: validate project before building
+      - name: Project Validation
+        uses: buildalon/unity-action@v1
+        with:
+          log-name: project-validation
+          build-target: StandaloneWindows64
+          args: -quit -batchmode -executeMethod Buildalon.Editor.BuildPipeline.UnityPlayerBuildTools.ValidateProject
+
+      # 7) Build Windows (outputs under ./Builds/StandaloneWindows64/)
+      - name: Windows Build
+        uses: buildalon/unity-action@v1
+        with:
+          log-name: StandaloneWindows64-Build
+          build-target: StandaloneWindows64
+          args: -quit -batchmode -executeMethod Buildalon.Editor.BuildPipeline.UnityPlayerBuildTools.StartCommandLineBuild
+
+      # 8) Upload artifacts (exe, _Data, logs)
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: Windows64-Build-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            ${{ github.workspace }}/**/*.log
+            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/**/*.exe
+            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/**/*_Data/**
+            ${{ env.UNITY_PROJECT_PATH }}/Builds/StandaloneWindows64/MonoBleedingEdge/**
